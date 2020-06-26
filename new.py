@@ -1,10 +1,10 @@
 import numpy as np
 from itertools import combinations_with_replacement, product
+from tqdm import tqdm
 
-
-def is_uniform(cnt):
+def is_uniform_array(cnt):
     """
-    Determines if a distribution is uniform.
+    Determines which of an array of distributions are uniform.
     :param cnt: numpy array of outcome counts
     :return: a boolean mask of valid faces
     """
@@ -14,30 +14,8 @@ def is_uniform(cnt):
     return is_uniform
 
 
-def is_filled(unq):
-    """
-    Determines if a distribution is filled.
-    :param unq: numpy array of unique outcomes
-    :return: a boolean mask of valid faces
-    """
-    min = unq[:,0]
-    max = np.max(unq, axis=1)
-    total = np.count_nonzero(unq, axis=1)
-    return max - min + 1 == total
-
-
-def is_standard(m, n, unq, cnt):
-    """
-    Determines if a distribution is filled.
-    :param m: number of dice
-    :param n: number of faces
-    :param unq: numpy array of unique outcomes
-    :param cnt: numpy array of outcome counts
-    :return: a boolean mask of valid faces
-    """
-    min = unq[:,0]
-    max = np.max(unq, axis=1)
-    return np.logical_and( np.logical_and(min == m, max == m * n), np.logical_and(is_filled(unq), is_uniform(cnt)))
+def is_uniform(cnt):
+    return np.all(cnt == cnt[0])
 
 
 def count_unique_rows(arr):
@@ -69,39 +47,33 @@ def relabel(m, n, r):
     min = m
     max = m * n
     print("Generating all possible dice")
-    possible_dice = np.asarray(list(combinations_with_replacement(r, n)))
+    possible_dice = np.asarray(list(combinations_with_replacement(r, n)), dtype=np.uint8)
     print("Generating dice distributions")
     possible_dice_unq, possible_dice_cnt = count_unique_rows(possible_dice)
     print("Finding valid dice")
-    valid_dice_mask = is_uniform(possible_dice_cnt)
+    valid_dice_mask = is_uniform_array(possible_dice_cnt)
     dice = possible_dice[valid_dice_mask]
-    dice_cnt = possible_dice_cnt[valid_dice_mask]
     num_dice = len(dice)
     print("Found", num_dice, "dice")
     print("Finding valid dice sets")
-    dice_indecies = np.arange(len(dice)).reshape((-1, 1))
+    dice_indecies = np.arange(len(dice), dtype=np.uint8).reshape((-1, 1))
     dice_sets = dice_indecies
-    dice_sets_outcome = dice
-    dice_sets_unq = None
-    dice_sets_cnt = dice_cnt
+    dice_set_outcomes = dice
     for i in range(1, m):
         num_sets = len(dice_sets)
-        r_sets = np.repeat(dice_sets, num_dice, axis=0)
-        r_outcomes = np.repeat(dice_sets_outcome, num_dice, axis=0)
-        r_dice = np.tile(dice, (num_sets, 1))
-        print('Considering adding a die to', num_sets, 'sets of', i + 1, 'dice')
-        print('> Calculating dice outcomes')
-        dice_sets_outcome = np.add.outer(r_outcomes, r_dice).diagonal(0,2,0).T.reshape((num_sets * num_dice, -1))
-        new_dice = np.tile(dice_indecies, (num_sets, 1))
-        dice_sets = np.concatenate((r_sets, new_dice), axis=1)
-        print('> Counting unique dice outcomes')
-        dice_sets_unq, dice_sets_cnt = count_unique_rows(dice_sets_outcome)
-        print('> Updating search')
-        nonuniform = np.where(np.logical_not(is_uniform(dice_sets_cnt)))
+        print('Considering adding a die to', num_sets, 'sets of', i, 'dice')
+        dice_sets = np.concatenate((np.repeat(dice_sets, num_dice, axis=0), np.tile(dice_indecies, (num_sets, 1))), axis=1)
+        dice_set_outcomes = np.repeat(dice_set_outcomes, num_dice, axis=0)
+        new_outcomes = np.empty((dice_set_outcomes.shape[0], n**(i+1)), dtype=np.uint8)
+        nonuniform = []
+        for u, set in enumerate(dice_sets):
+            new_outcomes[u] = np.add.outer(dice_set_outcomes[u][dice_set_outcomes[u] != 0], dice[set[-1]]).reshape((-1))
+            unq, cnt = np.unique(new_outcomes[u], return_counts=True)
+            if not is_uniform(cnt):
+                nonuniform.append(u)
+            elif i == m - 1 and min == m and max == m * n and max - min + 1 == len(unq):
+                return dice[set]
+            if (u % 10000 == 0):
+                print('Checked', u, 'new sets')
         dice_sets = np.delete(dice_sets, nonuniform, axis=0)
-        dice_sets_outcome = np.delete(dice_sets_outcome, nonuniform,  axis=0)
-        dice_sets_unq = np.delete(dice_sets_unq, nonuniform,  axis=0)
-        dice_sets_cnt = np.delete(dice_sets_cnt, nonuniform,  axis=0)
-    print('Done')
-    std_mask = is_standard(m, n, dice_sets_unq, dice_sets_cnt)
-    return dice[dice_sets[std_mask]]
+        dice_set_outcomes = new_outcomes
